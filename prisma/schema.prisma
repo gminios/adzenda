@@ -1,0 +1,297 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum TokenStatus {
+  VALID
+  EXPIRED
+  INVALID
+}
+
+enum UserRole {
+  ADMIN
+  SUPER_ADMIN
+}
+
+// ─── PRD-01: Multi-Tenant & Account Management ──────────────────────────────
+
+model Tenant {
+  id           String      @id @default(uuid())
+  name         String      @unique
+  slug         String      @unique
+  industry     String      @default("fashion")
+  active       Boolean     @default(true)
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  notes        String?
+  reportTone   String      @default("simple") // "simple" | "detailed"
+  targetRoas   Decimal?    @db.Decimal(10, 4) // business goal: green if ROAS ≥ this
+  targetCpa    Decimal?    @db.Decimal(12, 2) // business goal: green if CPA ≤ this
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  adAccounts          AdAccount[]
+  benchmarkThresholds BenchmarkThreshold[]
+  reports             Report[]
+  deliveryConfig      DeliveryConfig?
+  deliveryLogs        DeliveryLog[]
+}
+
+model AdAccount {
+  id              String      @id @default(uuid())
+  tenantId        String
+  tenant          Tenant      @relation(fields: [tenantId], references: [id])
+  metaAccountId   String      // e.g. "act_123456789"
+  name            String
+  currency        String      @default("ARS")
+  tokenEncrypted  String      // AES-256-GCM ciphertext (hex)
+  tokenIv         String      // AES-256-GCM IV (hex)
+  tokenAuthTag    String      // AES-256-GCM auth tag (hex)
+  tokenStatus     TokenStatus @default(VALID)
+  lastSyncAt      DateTime?
+  lastSyncStatus  String?
+  active          Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  campaigns  Campaign[]
+  syncLogs   SyncLog[]
+
+  @@unique([tenantId, metaAccountId])
+  @@index([tenantId])
+}
+
+// ─── NextAuth.js (admin-only) ────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          UserRole  @default(ADMIN)
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── PRD-02: Meta Campaign Hierarchy ────────────────────────────────────────
+
+model Campaign {
+  id           String    @id @default(uuid())
+  adAccountId  String
+  adAccount    AdAccount @relation(fields: [adAccountId], references: [id])
+  tenantId     String    // denormalized for fast tenant-scoped queries
+  metaCampaignId String
+  name         String
+  status       String    // ACTIVE, PAUSED, ARCHIVED
+  objective    String?
+  startDate    DateTime?
+  endDate      DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  adSets AdSet[]
+
+  @@unique([adAccountId, metaCampaignId])
+  @@index([tenantId])
+  @@index([adAccountId])
+}
+
+model AdSet {
+  id           String    @id @default(uuid())
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id])
+  tenantId     String
+  metaAdSetId  String
+  name         String
+  status       String
+  dailyBudget  Decimal?  @db.Decimal(12, 2)
+  lifetimeBudget Decimal? @db.Decimal(12, 2)
+  targetingJson Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ads Ad[]
+
+  @@unique([campaignId, metaAdSetId])
+  @@index([tenantId])
+  @@index([campaignId])
+}
+
+model Ad {
+  id          String  @id @default(uuid())
+  adSetId     String
+  adSet       AdSet   @relation(fields: [adSetId], references: [id])
+  tenantId    String
+  metaAdId    String
+  name        String
+  status      String
+  creativeId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dailyInsights DailyInsight[]
+
+  @@unique([adSetId, metaAdId])
+  @@index([tenantId])
+  @@index([adSetId])
+}
+
+model DailyInsight {
+  id              String   @id @default(uuid())
+  adId            String
+  ad              Ad       @relation(fields: [adId], references: [id])
+  tenantId        String
+  date            DateTime @db.Date
+  spend           Decimal  @db.Decimal(12, 2)
+  impressions     Int
+  reach           Int
+  clicks          Int
+  cpc             Decimal? @db.Decimal(10, 4)
+  cpm             Decimal? @db.Decimal(10, 4)
+  ctr             Decimal? @db.Decimal(8, 4)
+  frequency       Decimal? @db.Decimal(6, 3)
+  conversions     Int      @default(0)
+  conversionValue Decimal  @default(0) @db.Decimal(12, 2)
+  provisional     Boolean  @default(false) // data < 3 days old, still settling
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([adId, date])
+  @@index([tenantId, date])
+  @@index([adId])
+}
+
+// ─── PRD-05: Delivery ────────────────────────────────────────────────────────
+
+model DeliveryConfig {
+  id           String   @id @default(uuid())
+  tenantId     String   @unique
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  emailEnabled Boolean  @default(true)
+  recipients   String[] // email addresses
+  autoSend     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model DeliveryLog {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  reportId     String
+  report       Report   @relation(fields: [reportId], references: [id])
+  channel      String   // "email"
+  recipient    String
+  status       String   // "SENT" | "FAILED"
+  errorMessage String?
+  sentAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([reportId])
+}
+
+// ─── PRD-04: AI Reports ──────────────────────────────────────────────────────
+
+model Report {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  narrative   String   @db.Text
+  actionCards Json     // ActionCard[]
+  version     Int      @default(1) // increments on regeneration (max 3)
+  status      String   @default("DRAFT") // DRAFT | READY | SENT
+  aiModel     String   // claude model used
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deliveryLogs DeliveryLog[]
+
+  @@index([tenantId])
+  @@index([tenantId, periodStart])
+}
+
+// ─── PRD-03: Semaphore Thresholds ────────────────────────────────────────────
+
+model BenchmarkThreshold {
+  id          String   @id @default(uuid())
+  tenantId    String   // per-tenant override; global defaults are hardcoded in lib/benchmarks.ts
+  metric      String   // "roas" | "ctr" | "cpc" | "cpm" | "frequency" | "cpa"
+  lowerBound  Decimal  @db.Decimal(10, 4) // lower boundary between yellow/green zones
+  upperBound  Decimal  @db.Decimal(10, 4) // upper boundary between yellow/green zones
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, metric])
+}
+
+model SyncLog {
+  id          String    @id @default(uuid())
+  adAccountId String
+  adAccount   AdAccount @relation(fields: [adAccountId], references: [id])
+  tenantId    String
+  triggeredBy String    @default("cron") // "cron" | "manual"
+  status      String    // RUNNING, SUCCESS, FAILED
+  errorMessage String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([adAccountId])
+}
