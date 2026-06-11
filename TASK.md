@@ -15,6 +15,8 @@
 - [x] Job de ingesta diaria — `src/jobs/ingestion.ts` (03:00 UTC-3)
 - [x] Sync de jerarquía campaign → adset → ad — `lib/meta/hierarchy.ts`
 - [x] Detección de tokens expirados — error 190/102 → tokenStatus=EXPIRED
+- [x] (2026-06-11) US-10: re-sincronización manual por cuenta desde el panel — `lib/actions/ingestion.ts` (`triggerAccountSync` con `triggeredBy=manual`, mapeo de errores Meta a español) + `components/dashboard/sync-button.tsx` (estados idle/loading/success/error con feedback visual)
+- [x] (2026-06-11) US-11: alerta por email al admin cuando un token de Meta se marca como expirado — `lib/alerts/token-expired.ts` (notifica una vez en la transición VALID→EXPIRED) + `lib/delivery/email.ts` (`sendAdminAlertEmail`); integrado en cron de ingesta y sync manual. Destinatarios desde `ADMIN_EMAIL` (admite varios separados por coma)
 
 ### PRD-03: Panel de Visualización + Semáforos
 - [x] Schema BenchmarkThreshold + migración — `prisma/schema.prisma`

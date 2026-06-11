@@ -7,8 +7,31 @@ import { decryptToken } from "@/lib/meta/token";
 import { syncHierarchy } from "@/lib/meta/hierarchy";
 import { syncInsights } from "@/lib/meta/insights";
 import { logger } from "@/lib/logger";
+import { notifyTokenExpired } from "@/lib/alerts/token-expired";
 
 type ActionResult = { success: true } | { success: false; error: string };
+
+function friendlyMetaError(raw: string): string {
+  const codeMatch = raw.match(/Meta API error (\d+)/);
+  const code = codeMatch ? Number(codeMatch[1]) : null;
+
+  if (code === 190 || code === 102 || /token|oauth/i.test(raw)) {
+    return "El token de Meta expiró. Actualizalo en Editar cuenta.";
+  }
+  if (code === 200 || /permission/i.test(raw)) {
+    return "El token no tiene permisos para esta cuenta de Meta.";
+  }
+  if (code === 17 || code === 4 || code === 32 || code === 613 || code === 80004 || /rate.?limit|throttl/i.test(raw)) {
+    return "Meta está limitando las consultas. Volvé a intentar en unos minutos.";
+  }
+  if (code === 100) {
+    return "Meta no encontró la cuenta o el campo solicitado.";
+  }
+  if (/fetch failed|ETIMEDOUT|ECONNRESET|ENOTFOUND|network/i.test(raw)) {
+    return "No se pudo conectar con Meta. Verificá la conexión e intentá de nuevo.";
+  }
+  return "Hubo un error al sincronizar con Meta. Revisá el log de actividad.";
+}
 
 export async function triggerAccountSync(accountId: string): Promise<ActionResult> {
   const session = await auth();
@@ -19,6 +42,7 @@ export async function triggerAccountSync(accountId: string): Promise<ActionResul
     select: {
       id: true, metaAccountId: true, tenantId: true,
       tokenEncrypted: true, tokenIv: true, tokenAuthTag: true,
+      tokenStatus: true,
     },
   });
   if (!account) return { success: false, error: "Cuenta no encontrada" };
@@ -80,6 +104,11 @@ export async function triggerAccountSync(accountId: string): Promise<ActionResul
     });
 
     logger.error({ accountId, error: message }, "Sync manual falló");
-    return { success: false, error: message };
+
+    if (isTokenError && account.tokenStatus === "VALID") {
+      await notifyTokenExpired({ accountId: account.id, errorMessage: message });
+    }
+
+    return { success: false, error: friendlyMetaError(message) };
   }
 }

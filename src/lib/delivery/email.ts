@@ -99,6 +99,24 @@ export interface SendEmailParams {
   actionCards: ActionCard[];
 }
 
+export async function sendAdminAlertEmail(params: {
+  to: string[];
+  subject: string;
+  bodyHtml: string;
+}): Promise<void> {
+  const command = new SendEmailCommand({
+    FromEmailAddress: FROM,
+    Destination: { ToAddresses: params.to },
+    Content: {
+      Simple: {
+        Subject: { Data: params.subject, Charset: "UTF-8" },
+        Body: { Html: { Data: params.bodyHtml, Charset: "UTF-8" } },
+      },
+    },
+  });
+  await sesClient.send(command);
+}
+
 export async function sendReportEmail(params: SendEmailParams): Promise<void> {
   const { to, tenantName, periodStart, periodEnd, narrative, actionCards } = params;
 

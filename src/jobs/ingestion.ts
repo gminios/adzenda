@@ -8,6 +8,7 @@ import { decryptToken } from "@/lib/meta/token";
 import { syncHierarchy } from "@/lib/meta/hierarchy";
 import { syncInsights } from "@/lib/meta/insights";
 import { logger } from "@/lib/logger";
+import { notifyTokenExpired } from "@/lib/alerts/token-expired";
 
 type AccountRecord = {
   id: string;
@@ -16,6 +17,7 @@ type AccountRecord = {
   tokenEncrypted: string;
   tokenIv: string;
   tokenAuthTag: string;
+  tokenStatus: string;
 };
 
 async function ingestAccount(account: AccountRecord): Promise<void> {
@@ -78,6 +80,10 @@ async function ingestAccount(account: AccountRecord): Promise<void> {
     });
 
     logger.error({ adAccountId: account.id, error: message }, "Fallo al sincronizar cuenta");
+
+    if (isTokenError && account.tokenStatus === "VALID") {
+      await notifyTokenExpired({ accountId: account.id, errorMessage: message });
+    }
   }
 }
 
@@ -89,6 +95,7 @@ export async function runIngestion(triggeredBy: "cron" | "manual" = "cron"): Pro
     select: {
       id: true, metaAccountId: true, tenantId: true,
       tokenEncrypted: true, tokenIv: true, tokenAuthTag: true,
+      tokenStatus: true,
     },
   });
 
